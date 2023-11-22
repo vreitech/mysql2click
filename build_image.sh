@@ -44,10 +44,3 @@ then
 else
   echo "--- Image ${TARGET_IMAGE_NAME} is found"
 fi
-
-echo "--- Starting container"
-$([[ ${USE_DOCKER} != y ]] && echo podman || echo docker) run -it --rm \
-  --network host \
-  $([[ ${USE_DOCKER} != y ]] && echo "--tz 'Europe/Moscow'") \
-  -v $(pwd):/usr/src/myapp "${TARGET_IMAGE_NAME}" \
-  python3 ./mysql2click.py
