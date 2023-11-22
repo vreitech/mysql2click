@@ -49,5 +49,6 @@ echo "--- Starting container"
 $([[ ${USE_DOCKER} != y ]] && echo podman || echo docker) run -it --rm \
   --network host \
   $([[ ${USE_DOCKER} != y ]] && echo "--tz 'Europe/Moscow'") \
+  --shm-size=1gb \
   -v $(pwd):/usr/src/myapp "${TARGET_IMAGE_NAME}" \
   python3 ./mysql2click.py
