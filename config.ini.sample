@@ -1,6 +1,7 @@
 [DEFAULT]
 
 log_file_name = ./mysql2click.log
+
 mysql_host = 127.0.0.1
 mysql_port = 3306
 mysql_user = root
@@ -17,7 +18,7 @@ clickhouse_table = dc_log_old
 
 position_start = 27740000000
 position_end =   27750000000
-batch_rows = 200000
-sleep_interval = 2
+batch_rows = 100000
+sleep_interval = 5
 make_clickhouse_optimize = False
 make_mysql_delete = False
