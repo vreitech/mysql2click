@@ -1,3 +1,3 @@
-asyncio
-aiomysql
-asynch
+asyncio==3.4.3
+aiomysql==0.2.0
+asynch==0.2.2

@@ -1,7 +1,9 @@
+import sys
+import logging
+import configparser
 import asyncio
 import aiomysql
 import asynch
-import logging
 
 """
 Предлагаемая структура таблицы в ClickHouse:
@@ -9,102 +11,105 @@ import logging
 CREATE TABLE `dc_log_old`
 (
     `id` UInt64,
+    `log_time` DateTime,
     `log_key` UInt32,
     `log_type` Int32,
-    `log_data` String CODEC(ZSTD(16)),
-    `log_time` DateTime
+    `log_data` String CODEC(ZSTD(14)),
 )
 ENGINE = ReplacingMergeTree
 PARTITION BY toYYYYMM(log_time)
-PRIMARY KEY id
-ORDER BY (id, log_time);
+ORDER BY (log_type, log_key, id, log_time);
 """
 
-log_file_name = "./mysql2click.log"
-mysql_host = "127.0.0.1"
-mysql_port = 3306
-mysql_user = "root"
-mysql_password = "<MYSQL_PASSWORD_HERE>"
-mysql_db = "dc_bitrix"
-clickhouse_host = "127.0.0.1"
-clickhouse_port = 9000
-clickhouse_user = "root"
-clickhouse_password = "<CLICKHOUSE_PASSWORD_HERE>"
-clickhouse_db = "default"
-
-mysql_table = 'dc_log' # Имя таблицы в исходной БД
-clickhouse_table = 'dc_log_old' # Имя таблицы в целевой БД
-position_start = 27756000000
-position_end =   27756100000
-batch_rows = 10000 # Размер пачки строк - единицы перемещения из одной БД в другую в данном скрипте.
-make_mysql_deletes = False # Производить удаления из БД источника после переноса. `mysql_host` и `mysql_port` должны указывать на мастер!
-sleep_interval = 2 # На сколько секунд засыпать после переноса каждой пачки строк. Увеличьте, если слишком высокая нагрузка, в особенности если используете `make_mysql_deletes`
+config = configparser.ConfigParser()
+config.read('config.ini')
+conf_def = config["DEFAULT"]
 
 
 
 async def loop_mysql(loop):
     logger.info('Скрипт запущен')
-    logger.info(f'🔧 БД источник            : mysql://{mysql_host}:{mysql_port}/{mysql_db}/{mysql_table}')
-    logger.info(f'🔧 БД приёмник            : clickhouse://{clickhouse_host}:{clickhouse_port}/{clickhouse_db}/{clickhouse_table}')
-    logger.info(f'🔧 Размер пачки строк     : {batch_rows}')
-    logger.info(f'🔧 Стартовая позиция id   : {position_start}')
-    logger.info(f'🔧 Конечная позиция id    : {position_end}')
-    logger.info(f'🔧 Интервал между пачками : {sleep_interval}')
-    position_current = position_start
+    logger.info(f'🔧 БД источник             : mysql://{conf_def["mysql_host"]}:{conf_def["mysql_port"]}/{conf_def["mysql_db"]}/{conf_def["mysql_table"]}')
+    logger.info(f'🔧 БД приёмник             : clickhouse://{conf_def["clickhouse_host"]}:{conf_def["clickhouse_port"]}/{conf_def["clickhouse_db"]}/{conf_def["clickhouse_table"]}')
+    logger.info(f'🔧 Стартовая позиция id    : {conf_def["position_start"]}')
+    logger.info(f'🔧 Конечная позиция id     : {conf_def["position_end"]}')
+    logger.info(f'🔧 Размер пачки строк      : {conf_def["batch_rows"]}')
+    logger.info(f'🔧 Пауза между пачками (с) : {conf_def["sleep_interval"]}')
+    position_current = conf_def.getint("position_start")
     logger.info('❕ Устанавливаем пул коннектов MySQL...')
     try:
         pool_mysql = await aiomysql.create_pool(
-            host = mysql_host,
-            port = mysql_port,
-            user = mysql_user,
-            password = mysql_password,
-            db = mysql_db
+            host = conf_def["mysql_host"],
+            port = conf_def.getint("mysql_port"),
+            user = conf_def["mysql_user"],
+            password = conf_def["mysql_password"],
+            db = conf_def["mysql_db"],
+            minsize = 5,
+            maxsize = 15,
+            echo = True
         )
     except:
-        logger.info('🛑 Ошибка при попытке подключения к серверу MySQL!');
-        raise
+        logger.error('🛑 Ошибка при попытке подключения к серверу MySQL!');
+        logger.exception(sys.exc_info()[0])
+        sys.exit(8)
     logger.info('✅ Успешно!')
 
     logger.info('❕ Устанавливаем пул коннектов ClickHouse...')
     try:
         pool_clickhouse = await asynch.create_pool(
-            host = clickhouse_host,
-            port = clickhouse_port,
-            user = clickhouse_user,
-            password = clickhouse_password,
-            database = clickhouse_db
+            host = conf_def["clickhouse_host"],
+            port = conf_def.getint("clickhouse_port"),
+            user = conf_def["clickhouse_user"],
+            password = conf_def["clickhouse_password"],
+            database = conf_def["clickhouse_db"]
         )
     except:
-        logger.info('🛑 Ошибка при попытке подключения к серверу ClickHouse!');
-        raise
+        logger.error('🛑 Ошибка при попытке подключения к серверу ClickHouse!');
+        logger.exception(sys.exc_info()[0])
+        sys.exit(9)
     logger.info('✅ Успешно!')
 
     async with pool_mysql.acquire() as conn_mysql:
         async with conn_mysql.cursor() as cur_mysql:
             while True:
-                await cur_mysql.execute("""
-                    SELECT `id`, `log_key`, `log_type`, `log_data`, `log_time` FROM `%s` WHERE `id` > %%s and `id` <= %%s ORDER BY `id` LIMIT %%s
-                """ % (mysql_table), (position_current, position_end, batch_rows,))
+                logger.info('⏳ Чтение из MySQL...')
+                try:
+                    await cur_mysql.execute("""SELECT `id`, `log_key`, `log_type`, `log_data`, `log_time` FROM `%s` WHERE `id` > %%s and `id` <= %%s ORDER BY `id` LIMIT %%s""" % (conf_def["mysql_table"]), (position_current, conf_def.getint("position_end"), conf_def.getint("batch_rows"),))
+                except:
+                    logger.error('🛑 Ошибка при попытке выполнения запроса на чтение из MySQL!')
+                    logger.exception(sys.exc_info()[0])
+                    sys.exit(16)
                 row = await cur_mysql.fetchall()
                 if len(row) == 0:
+                    logger.info('Новых строк в MySQL не найдено.')
                     break
+                logger.info('⏳ Вставка в ClickHouse...')
                 position_current = await insert_clickhouse(pool_clickhouse, row)
-                await asyncio.sleep(sleep_interval)
+                if conf_def.getboolean("make_mysql_delete"):
+                    logger.info('⏳ Удаление из таблицы в MySQL...')
+                    conn_mysql_delete = await pool_mysql.acquire()
+                    cur_mysql_delete = await conn_mysql_delete.cursor()
+                    try:
+                        await cur_mysql_delete.execute("""DELETE FROM `%s` WHERE `id` <= %%s; COMMIT""" % (conf_def["mysql_table"]), (position_current,))
+                        row_delete = await cur_mysql_delete.fetchall()
+                        await cur_mysql_delete.close()
+                        await pool_mysql.release(conn_mysql_delete)
+                    except:
+                        logger.error('🛑 Ошибка при попытке выполнения запроса на удаление в MySQL!')
+                        logger.exception(sys.exc_info()[0])
+                        sys.exit(17)
+                await asyncio.sleep(conf_def.getint("sleep_interval"))
 
     logger.info('❕ Закрываем пул коннектов MySQL...')
     pool_mysql.close()
     await pool_mysql.wait_closed()
     logger.info('✅ Успешно!')
 
-    await asyncio.sleep(sleep_interval)
-    logger.info('❕ Оптимизация целевой таблицы...')
-    async with pool_clickhouse.acquire() as conn_clickhouse:
-        async with conn_clickhouse.cursor(cursor=asynch.cursors.DictCursor) as cursor_clickhouse:
-            ret_clickhouse = await cursor_clickhouse.execute("""
-                OPTIMIZE TABLE `%s`
-            """ % (clickhouse_table))
-            
-    logger.info('✅ Успешно!');
+    if conf_def.getboolean("make_clickhouse_optimize"):
+        logger.info('❕ Оптимизация целевой таблицы...')
+        await asyncio.sleep(conf_def.getint("sleep_interval"))
+        await optimize_clickhouse(pool_clickhouse)            
+        logger.info('✅ Успешно!');
 
     logger.info('❕ Закрываем пул коннектов ClickHouse...')
     pool_clickhouse.close()
@@ -120,23 +125,42 @@ async def insert_clickhouse(pool_clickhouse, row):
         async with conn_clickhouse.cursor(cursor=asynch.cursors.DictCursor) as cursor_clickhouse:
             rows_number = len(row)
             position_current = row[rows_number - 1][0];
-            ret_clickhouse = await cursor_clickhouse.execute("""
-                INSERT INTO `%s` (`id`, `log_key`, `log_type`, `log_data`, `log_time`) VALUES
-            """ % (clickhouse_table), row
-            )
+            try:
+                ret_clickhouse = await cursor_clickhouse.execute("""
+                    INSERT INTO `%s` (`id`, `log_key`, `log_type`, `log_data`, `log_time`) VALUES
+                """ % (conf_def["clickhouse_table"]), row)
+            except:
+                logger.error('🛑 Ошибка при попытке выполнения запроса на вставку в ClickHouse!')
+                logger.exception(sys.exc_info()[0])
+                sys.exit(17)
             assert ret_clickhouse == rows_number, f'Ошибка при вставке в ClickHouse: несовпадение числа строк при вставке.\nПолучено {rows_number} строк из MySQL, но вставлено {ret_clickhouse} строк в ClickHouse.'
             logger.info(f'⏳ Строк вставлено    : {rows_number}')
             logger.info(f'⏳ Текущая позиция id : {position_current}')
-            logger.info('⏳ Процент завершения : {:.2f}%'.format((position_current - position_start) / (position_end - position_start) * 100))
+            logger.info('⏳ Процент завершения : {:.2f}%'.format((position_current - conf_def.getint("position_start")) / (conf_def.getint("position_end") - conf_def.getint("position_start")) * 100))
             return position_current
 
 
 
-logger = logging.getLogger(__name__)
+async def optimize_clickhouse(pool_clickhouse):
+    async with pool_clickhouse.acquire() as conn_clickhouse:
+        async with conn_clickhouse.cursor(cursor=asynch.cursors.DictCursor) as cursor_clickhouse:
+            try:
+                ret_clickhouse = await cursor_clickhouse.execute("""
+                    OPTIMIZE TABLE `%s` DEDUPLICATE
+                """ % (conf_def["clickhouse_table"]))
+            except:
+                logger.error('🛑 Ошибка при попытке выполнения запроса на оптимизацию в ClickHouse!')
+                logger.exception(sys.exc_info()[0])
+                sys.exit(18)
+
+
+
+#logger = logging.getLogger(__name__)
+logger = logging.getLogger('aiomysql')
 logger.setLevel(logging.INFO)
 conhandler = logging.StreamHandler()
 conhandler.setLevel(logging.INFO)
-filehandler = logging.FileHandler(log_file_name, mode='a')
+filehandler = logging.FileHandler(conf_def["log_file_name"], mode='a')
 filehandler.setLevel(logging.INFO)
 formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] %(message)s', '%Y-%m-%d %H:%M:%S')
 conhandler.setFormatter(formatter)
