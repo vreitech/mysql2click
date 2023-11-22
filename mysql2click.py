@@ -92,12 +92,12 @@ async def loop_mysql(loop):
                     try:
                         await cur_mysql_delete.execute("""DELETE FROM `%s` WHERE `id` <= %%s; COMMIT""" % (conf_def["mysql_table"]), (position_current,))
                         row_delete = await cur_mysql_delete.fetchall()
-                        await cur_mysql_delete.close()
-                        await pool_mysql.release(conn_mysql_delete)
                     except:
                         logger.error('🛑 Ошибка при попытке выполнения запроса на удаление в MySQL!')
                         logger.exception(sys.exc_info()[0])
                         sys.exit(17)
+                    await cur_mysql_delete.close()
+                    await pool_mysql.release(conn_mysql_delete)
                 await asyncio.sleep(conf_def.getint("sleep_interval"))
 
     logger.info('❕ Закрываем пул коннектов MySQL...')
@@ -132,7 +132,7 @@ async def insert_clickhouse(pool_clickhouse, row):
             except:
                 logger.error('🛑 Ошибка при попытке выполнения запроса на вставку в ClickHouse!')
                 logger.exception(sys.exc_info()[0])
-                sys.exit(17)
+                sys.exit(18)
             assert ret_clickhouse == rows_number, f'Ошибка при вставке в ClickHouse: несовпадение числа строк при вставке.\nПолучено {rows_number} строк из MySQL, но вставлено {ret_clickhouse} строк в ClickHouse.'
             logger.info(f'⏳ Строк вставлено    : {rows_number}')
             logger.info(f'⏳ Текущая позиция id : {position_current}')
@@ -145,17 +145,14 @@ async def optimize_clickhouse(pool_clickhouse):
     async with pool_clickhouse.acquire() as conn_clickhouse:
         async with conn_clickhouse.cursor(cursor=asynch.cursors.DictCursor) as cursor_clickhouse:
             try:
-                ret_clickhouse = await cursor_clickhouse.execute("""
-                    OPTIMIZE TABLE `%s` DEDUPLICATE
-                """ % (conf_def["clickhouse_table"]))
+                ret_clickhouse = await cursor_clickhouse.execute("""OPTIMIZE TABLE `%s` DEDUPLICATE""" % (conf_def["clickhouse_table"]))
             except:
                 logger.error('🛑 Ошибка при попытке выполнения запроса на оптимизацию в ClickHouse!')
                 logger.exception(sys.exc_info()[0])
-                sys.exit(18)
+                sys.exit(19)
 
 
 
-#logger = logging.getLogger(__name__)
 logger = logging.getLogger('aiomysql')
 logger.setLevel(logging.INFO)
 conhandler = logging.StreamHandler()
