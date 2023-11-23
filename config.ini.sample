@@ -2,23 +2,27 @@
 
 log_file_name = ./mysql2click.log
 
-mysql_host = 127.0.0.1
-mysql_port = 3306
-mysql_user = root
-mysql_password = <MYSQL_PASSWORD_HERE>
-mysql_db = dc_bitrix
+mysql_host_read = 127.0.0.1
+mysql_port_read = 3306
+mysql_user_read = dc_bitrix
+mysql_password_read = <MYSQL_PASSWORD_HERE>
+mysql_host_delete = 127.0.0.1
+mysql_port_delete = 3306
+mysql_user_delete = dc_bitrix
+mysql_password_delete = <MYSQL_PASSWORD_HERE>
 clickhouse_host = 127.0.0.1
 clickhouse_port = 9000
-clickhouse_user = root
+clickhouse_user = mysql2click_writer
 clickhouse_password = <CLICKHOUSE_PASSWORD_HERE>
-clickhouse_db = default
 
+mysql_db = dc_bitrix
 mysql_table = dc_log
+clickhouse_db = dc_bitrix_archive
 clickhouse_table = dc_log_old
 
 position_start = 27740000000
 position_end =   27750000000
-batch_rows = 100000
+batch_rows = 3000
 sleep_interval = 5
 make_clickhouse_optimize = False
 make_mysql_delete = False
