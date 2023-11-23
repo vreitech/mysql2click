@@ -1,3 +1,4 @@
 *~
+/tmp
 /config.ini
-/mysql2click.log
+/*.log
