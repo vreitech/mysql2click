@@ -52,6 +52,7 @@ async def loop_mysql(loop):
             db = conf_def["mysql_db"],
             minsize = 5,
             maxsize = 15,
+            autocommit = True,
             echo = True
         )
     except:
@@ -71,6 +72,7 @@ async def loop_mysql(loop):
                 db = conf_def["mysql_db"],
                 minsize = 5,
                 maxsize = 15,
+                autocommit = True,
                 echo = True
             )
         except:
@@ -118,7 +120,7 @@ async def loop_mysql(loop):
                     conn_mysql_delete = await pool_mysql_delete.acquire()
                     cur_mysql_delete = await conn_mysql_delete.cursor()
                     try:
-                        await cur_mysql_delete.execute("""DELETE FROM `%s` WHERE `id` > %%s AND `id` <= %%s; COMMIT""" % (conf_def["mysql_table"]), (position_current_at_read, position_current,))
+                        await cur_mysql_delete.execute("""DELETE FROM `%s` WHERE `id` > %%s AND `id` <= %%s""" % (conf_def["mysql_table"]), (position_current_at_read, position_current,))
                         row_delete = await cur_mysql_delete.fetchall()
                     except:
                         logger.error('🛑 Ошибка при попытке выполнения запроса на удаление в MySQL!')
