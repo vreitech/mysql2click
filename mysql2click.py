@@ -29,20 +29,26 @@ conf_def = config["DEFAULT"]
 
 async def loop_mysql(loop):
     logger.info('Скрипт запущен')
-    logger.info(f'🔧 БД источник             : mysql://{conf_def["mysql_host"]}:{conf_def["mysql_port"]}/{conf_def["mysql_db"]}/{conf_def["mysql_table"]}')
+    logger.info(f'🔧 БД источник (чтение)    : mysql://{conf_def["mysql_host_read"]}:{conf_def["mysql_port_read"]}/{conf_def["mysql_db"]}/{conf_def["mysql_table"]}')
+    if conf_def.getboolean("make_mysql_delete"):
+        logger.info(f'🔧 БД источник (удаление)  : mysql://{conf_def["mysql_host_delete"]}:{conf_def["mysql_port_delete"]}/{conf_def["mysql_db"]}/{conf_def["mysql_table"]}')
     logger.info(f'🔧 БД приёмник             : clickhouse://{conf_def["clickhouse_host"]}:{conf_def["clickhouse_port"]}/{conf_def["clickhouse_db"]}/{conf_def["clickhouse_table"]}')
     logger.info(f'🔧 Стартовая позиция id    : {conf_def["position_start"]}')
     logger.info(f'🔧 Конечная позиция id     : {conf_def["position_end"]}')
     logger.info(f'🔧 Размер пачки строк      : {conf_def["batch_rows"]}')
     logger.info(f'🔧 Пауза между пачками (с) : {conf_def["sleep_interval"]}')
+    logger.warning('Ждём 10 секунд (последний шанс на отмену)...')
+    await asyncio.sleep(10)
+
     position_current = conf_def.getint("position_start")
-    logger.info('❕ Устанавливаем пул коннектов MySQL...')
+
+    logger.info('❕ Устанавливаем пул коннектов MySQL для чтения...')
     try:
-        pool_mysql = await aiomysql.create_pool(
-            host = conf_def["mysql_host"],
-            port = conf_def.getint("mysql_port"),
-            user = conf_def["mysql_user"],
-            password = conf_def["mysql_password"],
+        pool_mysql_read = await aiomysql.create_pool(
+            host = conf_def["mysql_host_read"],
+            port = conf_def.getint("mysql_port_read"),
+            user = conf_def["mysql_user_read"],
+            password = conf_def["mysql_password_read"],
             db = conf_def["mysql_db"],
             minsize = 5,
             maxsize = 15,
@@ -53,6 +59,25 @@ async def loop_mysql(loop):
         logger.exception(sys.exc_info()[0])
         sys.exit(8)
     logger.info('✅ Успешно!')
+
+    if conf_def.getboolean("make_mysql_delete"):
+        logger.info('❕ Устанавливаем пул коннектов MySQL для удаления...')
+        try:
+            pool_mysql_delete = await aiomysql.create_pool(
+                host = conf_def["mysql_host_delete"],
+                port = conf_def.getint("mysql_port_delete"),
+                user = conf_def["mysql_user_delete"],
+                password = conf_def["mysql_password_delete"],
+                db = conf_def["mysql_db"],
+                minsize = 5,
+                maxsize = 15,
+                echo = True
+            )
+        except:
+            logger.error('🛑 Ошибка при попытке подключения к серверу MySQL!');
+            logger.exception(sys.exc_info()[0])
+            sys.exit(8)
+        logger.info('✅ Успешно!')
 
     logger.info('❕ Устанавливаем пул коннектов ClickHouse...')
     try:
@@ -69,17 +94,20 @@ async def loop_mysql(loop):
         sys.exit(9)
     logger.info('✅ Успешно!')
 
-    async with pool_mysql.acquire() as conn_mysql:
-        async with conn_mysql.cursor() as cur_mysql:
+    async with pool_mysql_read.acquire() as conn_mysql_read:
+        async with conn_mysql_read.cursor() as cur_mysql_read:
             while True:
                 logger.info('⏳ Чтение из MySQL...')
                 try:
-                    await cur_mysql.execute("""SELECT `id`, `log_key`, `log_type`, `log_data`, `log_time` FROM `%s` WHERE `id` > %%s and `id` <= %%s ORDER BY `id` LIMIT %%s""" % (conf_def["mysql_table"]), (position_current, conf_def.getint("position_end"), conf_def.getint("batch_rows"),))
+                    # Запоминаем позицию, при удалении нам она понадобится
+                    position_current_at_read = position_current
+                    
+                    await cur_mysql_read.execute("""SELECT `id`, `log_key`, `log_type`, `log_data`, `log_time` FROM `%s` WHERE `id` > %%s AND `id` <= %%s ORDER BY `id` LIMIT %%s""" % (conf_def["mysql_table"]), (position_current, conf_def.getint("position_end"), conf_def.getint("batch_rows"),))
                 except:
                     logger.error('🛑 Ошибка при попытке выполнения запроса на чтение из MySQL!')
                     logger.exception(sys.exc_info()[0])
                     sys.exit(16)
-                row = await cur_mysql.fetchall()
+                row = await cur_mysql_read.fetchall()
                 if len(row) == 0:
                     logger.info('Новых строк в MySQL не найдено.')
                     break
@@ -87,23 +115,29 @@ async def loop_mysql(loop):
                 position_current = await insert_clickhouse(pool_clickhouse, row)
                 if conf_def.getboolean("make_mysql_delete"):
                     logger.info('⏳ Удаление из таблицы в MySQL...')
-                    conn_mysql_delete = await pool_mysql.acquire()
+                    conn_mysql_delete = await pool_mysql_delete.acquire()
                     cur_mysql_delete = await conn_mysql_delete.cursor()
                     try:
-                        await cur_mysql_delete.execute("""DELETE FROM `%s` WHERE `id` <= %%s; COMMIT""" % (conf_def["mysql_table"]), (position_current,))
+                        await cur_mysql_delete.execute("""DELETE FROM `%s` WHERE `id` > %%s AND `id` <= %%s; COMMIT""" % (conf_def["mysql_table"]), (position_current_at_read, position_current,))
                         row_delete = await cur_mysql_delete.fetchall()
                     except:
                         logger.error('🛑 Ошибка при попытке выполнения запроса на удаление в MySQL!')
                         logger.exception(sys.exc_info()[0])
                         sys.exit(17)
                     await cur_mysql_delete.close()
-                    await pool_mysql.release(conn_mysql_delete)
+                    await pool_mysql_delete.release(conn_mysql_delete)
                 await asyncio.sleep(conf_def.getint("sleep_interval"))
 
-    logger.info('❕ Закрываем пул коннектов MySQL...')
-    pool_mysql.close()
-    await pool_mysql.wait_closed()
+    logger.info('❕ Закрываем пул коннектов MySQL для чтения...')
+    pool_mysql_read.close()
+    await pool_mysql_read.wait_closed()
     logger.info('✅ Успешно!')
+
+    if conf_def.getboolean("make_mysql_delete"):
+        logger.info('❕ Закрываем пул коннектов MySQL для удаления...')
+        pool_mysql_delete.close()
+        await pool_mysql_delete.wait_closed()
+        logger.info('✅ Успешно!')
 
     if conf_def.getboolean("make_clickhouse_optimize"):
         logger.info('❕ Оптимизация целевой таблицы...')
