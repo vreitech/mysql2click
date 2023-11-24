@@ -42,5 +42,5 @@ then
     exit 1
   fi
 else
-  echo "--- Image ${TARGET_IMAGE_NAME} is found"
+  echo "--- Image ${TARGET_IMAGE_NAME} is found. Run '$([[ ${USE_DOCKER} != y ]] && echo podman || echo docker) rmi ${TARGET_IMAGE_NAME}:latest' first if you need to rebuild it."
 fi
