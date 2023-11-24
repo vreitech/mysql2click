@@ -122,10 +122,14 @@ async def loop_mysql(loop):
                     try:
                         await cur_mysql_delete.execute("""DELETE FROM `%s` WHERE `id` > %%s AND `id` <= %%s""" % (conf_def["mysql_table"]), (position_current_at_read, position_current,))
                         row_delete = await cur_mysql_delete.fetchall()
-                    except:
+                    except aiomysql.OperationalError as e:
                         logger.error('🛑 Ошибка при попытке выполнения запроса на удаление в MySQL!')
-                        logger.exception(sys.exc_info()[0])
-                        sys.exit(17)
+                        if e.args[0] == 1205:
+                            logger.warning(f'Произошла ошибка при попытке удаления записей с id в интервале с {position_current_at_read} по {position_current} из MySQL на хосте {conf_def["mysql_host_delete"]}.\nРабота скрипта будет продолжена, однако следует проверить, что в MySQL нет XA-транзакций, блокирующих удаление, командой "XA RECOVER;"\nТекст исключения представлен ниже.')
+                            logger.exception(sys.exc_info()[0])
+                        else:
+                            logger.exception(sys.exc_info()[0])
+                            sys.exit(17)
                     await cur_mysql_delete.close()
                     await pool_mysql_delete.release(conn_mysql_delete)
                 await asyncio.sleep(conf_def.getint("sleep_interval"))
