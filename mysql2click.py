@@ -24,25 +24,14 @@ ORDER BY (log_type, log_key, id, log_time);
 """
 
 
-
-class GracefulTerm:
-    term_now = False
-    def __init__(self):
-        signal.signal(signal.SIGINT, self.exit_gracefully)
-        signal.signal(signal.SIGTERM, self.exit_gracefully)
-
-    def exit_gracefully(self, signum, frame):
-        self.term_now = True
-
-
-
 if __name__ == '__main__':
-    terminator = GracefulTerm()
     config = configparser.ConfigParser()
     config.read('config.ini')
     conf_def = config["DEFAULT"]
 
 
+
+    signal.signal(signal.SIGINT, self.default_int_handler)
 
     async def loop_mysql(loop):
         logger.info('Скрипт запущен')
@@ -113,52 +102,53 @@ if __name__ == '__main__':
             sys.exit(9)
         logger.info('✅ Успешно!')
 
-        async with pool_mysql_read.acquire() as conn_mysql_read:
-            async with conn_mysql_read.cursor() as cur_mysql_read:
-                while True:
-                    logger.info('⏳ Чтение из MySQL...')
-                    try:
-                        # Запоминаем позицию, при удалении нам она понадобится
-                        position_current_at_read = position_current
-                        
-                        await cur_mysql_read.execute("""SELECT `id`, `log_key`, `log_type`, `log_data`, `log_time` FROM `%s` WHERE `id` > %%s AND `id` <= %%s ORDER BY `id` LIMIT %%s""" % (conf_def["mysql_table"]), (position_current, conf_def.getint("position_end"), conf_def.getint("batch_rows"),))
-                    except:
-                        logger.error('🛑 Ошибка при попытке выполнения запроса на чтение из MySQL!')
-                        logger.exception(sys.exc_info()[0])
-                        sys.exit(16)
-                    row = await cur_mysql_read.fetchall()
-                    if len(row) == 0:
-                        logger.info('Новых строк в MySQL не найдено.')
-                        break
-                    logger.info('⏳ Вставка в ClickHouse...')
-                    position_current = await insert_clickhouse(pool_clickhouse, row)
-                    if conf_def.getboolean("make_mysql_delete"):
-                        logger.info('⏳ Удаление из таблицы в MySQL...')
-                        conn_mysql_delete = await pool_mysql_delete.acquire()
-                        cur_mysql_delete = await conn_mysql_delete.cursor()
+        try:
+            async with pool_mysql_read.acquire() as conn_mysql_read:
+                async with conn_mysql_read.cursor() as cur_mysql_read:
+                    while True:
+                        logger.info('⏳ Чтение из MySQL...')
                         try:
-                            await cur_mysql_delete.execute("""DELETE FROM `%s` WHERE `id` > %%s AND `id` <= %%s""" % (conf_def["mysql_table"]), (position_current_at_read, position_current,))
-                            row_delete = await cur_mysql_delete.fetchall()
-                        except aiomysql.OperationalError as e:
-                            logger.error('🛑 Ошибка при попытке выполнения запроса на удаление в MySQL!')
-                            if e.args[0] == 1205:
-                                logger.warning(f'Произошла ошибка при попытке удаления записей с id в интервале с {position_current_at_read} по {position_current} из MySQL на хосте "{conf_def["mysql_host_delete"]}".')
-                                logger.warning('Работа скрипта будет продолжена, однако следует проверить, что в MySQL нет незакоммиченых XA-транзакций, блокирующих удаление.')
-                                logger.warning(f'Для проверки воспользуйтесь в клиенте MySQL командой "XA RECOVER;" на хосте "{conf_def["mysql_host_delete"]}".')
-                                logger.warning('Если команда вернёт одну или несколько записей - довольно велика вероятность того, что таблица в кластере MySQL неконсистентна')
-                                logger.warning('как минимум по одному id из диапазона.')
-                                logger.warning('В противном случае ошибка связана с чем-то другим и, возможно, имеет временный характер.')
-                                logger.warning('Текст ошибки при попытке удаления представлен ниже.')
-                                logger.exception(sys.exc_info()[0])
-                            else:
-                                logger.exception(sys.exc_info()[0])
-                                sys.exit(17)
-                        await cur_mysql_delete.close()
-                        await pool_mysql_delete.release(conn_mysql_delete)
-                    if terminator.term_now:
-                        logger.info('🔚 Получен сигнал на прерывание работы.')
-                        break
-                    await asyncio.sleep(conf_def.getint("sleep_interval"))
+                            # Запоминаем позицию, при удалении нам она понадобится
+                            position_current_at_read = position_current
+
+                            await cur_mysql_read.execute("""SELECT `id`, `log_key`, `log_type`, `log_data`, `log_time` FROM `%s` WHERE `id` > %%s AND `id` <= %%s ORDER BY `id` LIMIT %%s""" % (conf_def["mysql_table"]), (position_current, conf_def.getint("position_end"), conf_def.getint("batch_rows"),))
+                        except:
+                            logger.error('🛑 Ошибка при попытке выполнения запроса на чтение из MySQL!')
+                            logger.exception(sys.exc_info()[0])
+                            sys.exit(16)
+                        row = await cur_mysql_read.fetchall()
+                        if len(row) == 0:
+                            logger.info('Новых строк в MySQL не найдено.')
+                            break
+                        logger.info('⏳ Вставка в ClickHouse...')
+                        position_current = await insert_clickhouse(pool_clickhouse, row)
+                        if conf_def.getboolean("make_mysql_delete"):
+                            logger.info('⏳ Удаление из таблицы в MySQL...')
+                            conn_mysql_delete = await pool_mysql_delete.acquire()
+                            cur_mysql_delete = await conn_mysql_delete.cursor()
+                            try:
+                                await cur_mysql_delete.execute("""DELETE FROM `%s` WHERE `id` > %%s AND `id` <= %%s""" % (conf_def["mysql_table"]), (position_current_at_read, position_current,))
+                                row_delete = await cur_mysql_delete.fetchall()
+                            except aiomysql.OperationalError as e:
+                                logger.error('🛑 Ошибка при попытке выполнения запроса на удаление в MySQL!')
+                                if e.args[0] == 1205:
+                                    logger.warning(f'Произошла ошибка при попытке удаления записей с id в интервале с {position_current_at_read} по {position_current} из MySQL на хосте "{conf_def["mysql_host_delete"]}".')
+                                    logger.warning('Работа скрипта будет продолжена, однако следует проверить, что в MySQL нет незакоммиченых XA-транзакций, блокирующих удаление.')
+                                    logger.warning(f'Для проверки воспользуйтесь в клиенте MySQL командой "XA RECOVER;" на хосте "{conf_def["mysql_host_delete"]}".')
+                                    logger.warning('Если команда вернёт одну или несколько записей - довольно велика вероятность того, что таблица в кластере MySQL неконсистентна')
+                                    logger.warning('как минимум по одному id из диапазона.')
+                                    logger.warning('В противном случае ошибка связана с чем-то другим и, возможно, имеет временный характер.')
+                                    logger.warning('Текст ошибки при попытке удаления представлен ниже.')
+                                    logger.exception(sys.exc_info()[0])
+                                else:
+                                    logger.exception(sys.exc_info()[0])
+                                    sys.exit(17)
+                            await cur_mysql_delete.close()
+                            await pool_mysql_delete.release(conn_mysql_delete)
+                        await asyncio.sleep(conf_def.getint("sleep_interval"))
+        except KeyboardInterrupt:
+            logger.info('🔚 Получен сигнал на прерывание работы.')
+            break
 
         logger.info('❕ Закрываем пул коннектов MySQL для чтения...')
         pool_mysql_read.close()
