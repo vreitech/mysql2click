@@ -47,10 +47,10 @@ fi
 
 echo "--- Starting container"
 $([[ ${USE_DOCKER} != y ]] && echo podman || echo docker) run -it --rm \
+  $([[ ${USE_DOCKER} != y ]] && echo "--tz=Europe/Moscow") \
   --network host \
-  $([[ ${USE_DOCKER} != y ]] && echo "--tz 'Europe/Moscow'") \
   --shm-size=1gb \
   -v "$(pwd)/config.ini:/usr/src/myapp/config.ini" \
   -v "$(pwd)/logs:/usr/src/myapp/logs" \
   "${TARGET_IMAGE_NAME}" \
-  python3 ./mysql2click.py
+  python3 ./mysql2click.py $([[ ! -z $1 ]] && echo "--section=$1")
