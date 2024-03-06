@@ -70,6 +70,31 @@ SELECT
     max(id) AS max_id
 FROM b_event_log_old
 GROUP BY log_date;
+
+CREATE TABLE dc_order_history_old
+(
+    `id` UInt64 CODEC(Delta, ZSTD(14)),
+    `order_id` UInt32 CODEC(Delta, ZSTD(14)),
+    `text` String CODEC(ZSTD(14)),
+    `date` DateTime CODEC(Delta, ZSTD(14))
+)
+ENGINE = ReplacingMergeTree
+PARTITION BY toYYYYMM(date)
+ORDER BY (order_id, id, date);
+
+CREATE MATERIALIZED VIEW dc_order_history_old_max_id
+(
+    `log_date` Date CODEC(Delta, ZSTD(14)),
+    `max_id` SimpleAggregateFunction(max, UInt64) CODEC(Delta, ZSTD(14))
+)
+ENGINE = AggregatingMergeTree
+ORDER BY log_date
+SETTINGS index_granularity = 8192 AS
+SELECT
+    DATE(date) AS log_date,
+    max(id) AS max_id
+FROM dc_order_history_old
+GROUP BY log_date;
 """
 
 
@@ -86,8 +111,6 @@ if (args.section is not None):
     section = args.section
 conf = conf_full[section]
 
-signal.signal(signal.SIGINT, self.sigIntTermHandler)
-signal.signal(signal.SIGTERM, self.sigIntTermHandler)
 
 async def loop_mysql(loop):
     logger.info('Скрипт запущен')
