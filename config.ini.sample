@@ -7,30 +7,30 @@ log_file_name = ./mysql2click.log
 
 mysql_host_read = 127.0.0.1
 mysql_port_read = 3306
-mysql_user_read = dc_bitrix
+mysql_user_read = myreader
 mysql_password_read = <MYSQL_PASSWORD_HERE>
 mysql_host_delete = 127.0.0.1
 mysql_port_delete = 3306
-mysql_user_delete = dc_bitrix
+mysql_user_delete = mywriter
 mysql_password_delete = <MYSQL_PASSWORD_HERE>
 clickhouse_host = 127.0.0.1
 clickhouse_port = 9000
-clickhouse_user = mysql2click_writer
+clickhouse_user = chwriter
 clickhouse_password = <CLICKHOUSE_PASSWORD_HERE>
 
-mysql_db = dc_bitrix
-mysql_table = dc_log
+mysql_db = mydb
+mysql_table = mytable
 mysql_read_query = SELECT `id`, `log_key`, `log_type`, `log_data`, `log_time` FROM `%%s` WHERE `id` > %%%%s AND `id` <= %%%%s ORDER BY `id` LIMIT %%%%s
 mysql_delete_query = DELETE FROM `%%s` WHERE `id` > %%%%s AND `id` <= %%%%s
-clickhouse_db = dc_bitrix_archive
-clickhouse_table = dc_log_old
+clickhouse_db = chdb
+clickhouse_table = chtable
 clickhouse_insert_query = INSERT INTO `%%s` (`id`, `log_key`, `log_type`, `log_data`, `log_time`) VALUES
 clickhouse_optimize_query = OPTIMIZE TABLE `%%s` DEDUPLICATE
 
 position_start = 27740000000
 position_end =   27750000000
-batch_rows = 3000
-sleep_interval = 5
+batch_rows = 10000
+sleep_interval = 1
 make_clickhouse_optimize = False
 make_mysql_delete = False
 
@@ -40,23 +40,23 @@ log_file_name = ./mysql2click_another_one.log
 
 mysql_host_read = 127.0.0.1
 mysql_port_read = 3306
-mysql_user_read = dc_bitrix
+mysql_user_read = myreader
 mysql_password_read = <MYSQL_PASSWORD_HERE>
 mysql_host_delete = 127.0.0.1
 mysql_port_delete = 3306
-mysql_user_delete = dc_bitrix
+mysql_user_delete = mywriter
 mysql_password_delete = <MYSQL_PASSWORD_HERE>
 clickhouse_host = 127.0.0.1
 clickhouse_port = 9000
-clickhouse_user = another_writer
+clickhouse_user = chwriter
 clickhouse_password = <CLICKHOUSE_PASSWORD_HERE>
 
-mysql_db = dc_bitrix
-mysql_table = dc_another_log
+mysql_db = mydb
+mysql_table = another_mytable
 mysql_read_query = SELECT `id`, `timestamp_x`, `severity`, `audit_type_id`, `description` FROM `%%s` WHERE `id` > %%%%s AND `id` <= %%%%s ORDER BY `id` LIMIT %%%%s
 mysql_delete_query = DELETE FROM `%%s` WHERE `id` > %%%%s AND `id` <= %%%%s
-clickhouse_db = dc_bitrix_archive
-clickhouse_table = dc_another_log_old
+clickhouse_db = chdb
+clickhouse_table = another_chtable
 clickhouse_insert_query = INSERT INTO `%%s` (`id`, `timestamp_x`, `severity`, `audit_type_id`, `description`) VALUES
 clickhouse_optimize_query = OPTIMIZE TABLE `%%s` DEDUPLICATE
 
